@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install system dependencies
         run: >
           sudo apt-get update &&
@@ -42,7 +42,7 @@ jobs:
         working-directory: build
         run: cmake --build . --target install
       - name: Upload package
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v4
         with:
           name: opendnp3-linux-x64-${{ matrix.compiler }}-${{ matrix.build-type }}-${{ github.sha }}
           path: build/opendnp3-package
@@ -54,7 +54,7 @@ jobs:
           mvn --batch-mode verify
       - name: Upload Java bindings
         if: ${{ matrix.compiler == 'gcc' && matrix.build-type == 'Release' }}
-        uses: actions/upload-artifact@v2-preview
+        uses: actions/upload-artifact@v4
         with:
           name: opendnp3-java-bindings-${{ github.sha }}
           path: java/bindings/target/opendnp3-bindings-*-SNAPSHOT.jar
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install system dependencies
         run: >
           sudo apt-get update &&
@@ -92,16 +92,16 @@ jobs:
     runs-on: windows-2019
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install system dependencies
         run: >
           if("${{ matrix.architecture }}" -eq "x86") { $flag = "--x86" } else { $flag = "" };
           choco install --no-progress "$flag" cmake.portable nuget.commandline openssl; mkdir build
       - name: Install Java
-        uses: actions/setup-java@v1
+        uses: actions/setup-java@v4
         with:
           java-version: 8
-          java-package: jdk
+          distribution: 'temurin'
           architecture: ${{ matrix.architecture }}
       - name: CMake configure
         working-directory: build
@@ -122,7 +122,7 @@ jobs:
         working-directory: build
         run: cmake --build . --config ${{ matrix.build-type }} --target install
       - name: Upload package
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v4
         with:
           name: opendnp3-win-${{ matrix.architecture }}-msvc-${{ matrix.build-type }}-${{ github.sha }}
           path: build/opendnp3-package
@@ -134,9 +134,9 @@ jobs:
           Copy-Item build/opendnp3-package/lib/45/* -Destination build/opendnp3-nuget/runtime/${{ matrix.architecture }} -Recurse -Force
       - name: Upload NuGet stuff
         if: ${{ matrix.build-type == 'Release' }}
-        uses: actions/upload-artifact@v2-preview
+        uses: actions/upload-artifact@v4
         with:
-          name: temp-nuget-${{ github.sha }}
+          name: temp-nuget-${{ github.sha }}-${{ matrix.architecture }}
           path: build/opendnp3-nuget/*
       - name: Build and test Java bindings
         working-directory: java
@@ -154,15 +154,16 @@ jobs:
           nuget-version: latest
           nuget-api-key: ${{ secrets.NUGET_API_KEY }}
       - name: Download NuGet stuff
-        uses: actions/download-artifact@v2-preview
+        uses: actions/download-artifact@v4
         with:
-          name: temp-nuget-${{ github.sha }}
+          pattern: temp-nuget-${{ github.sha }}-*
+          merge-multiple: true
           path: opendnp3-nuget
       - name: Generate NuGet package
         working-directory: opendnp3-nuget
         run: nuget pack
       - name: Upload NuGet package as artifact
-        uses: actions/upload-artifact@v2-preview
+        uses: actions/upload-artifact@v4
         with:
           name: opendnp3-nuget-${{ github.sha }}
           path: opendnp3-nuget/*.nupkg
@@ -176,12 +177,12 @@ jobs:
     if: "!startsWith(github.ref, 'refs/tags/')"
     steps:
       - name: Download pre-compiled OpenDNP3
-        uses: actions/download-artifact@v2-preview
+        uses: actions/download-artifact@v4
         with:
           name: opendnp3-linux-x64-gcc-Release-${{ github.sha }}
           path: opendnp3
       - name: Download pre-built OpenDNP3 Java bindings
-        uses: actions/download-artifact@v2-preview
+        uses: actions/download-artifact@v4
         with:
           name: opendnp3-java-bindings-${{ github.sha }}
           path: opendnp3-java
@@ -190,14 +191,14 @@ jobs:
           jarfile=( opendnp3-java/*.jar ) &&
           sudo mvn --batch-mode org.apache.maven.plugins:maven-install-plugin:3.0.0-M1:install-file -Dfile=$jarfile
       - name: Checkout dnp4s
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           repository: grid-io/dnp4s
           ssh-key: ${{ secrets.DNP4S_SSH_KEY }}
           ref: develop
           path: dnp4s
       - name: Checkout OpenDNP3 test runner
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           repository: dnp3/opendnp3-dnp4s-driver
           path: opendnp3-dnp4s-driver
@@ -214,7 +215,42 @@ jobs:
           mvn --batch-mode exec:exec
       - name: Upload conformance test results
         if: always()
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v4
         with:
           name: conformance-results-${{ github.sha }}
           path: opendnp3-dnp4s-driver/results
+  docker-publish:
+    needs: [ci-linux, ci-windows]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/demo
+          tags: |
+            type=ref,event=branch
+            type=sha
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+    outputs:
+      image: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+

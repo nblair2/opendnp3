@@ -58,7 +58,32 @@ int main(int argc, char* argv[])
     DNP3Manager manager(1, ConsoleLogger::Create());
 
     // Connect via a TCPClient socket to a outstation
-    auto channel = manager.AddTCPClient("tcpclient", logLevels, ChannelRetry::Default(), {IPEndpoint("127.0.0.1", 20000)},
+    // optional command-line: ./master [host] [port] [poll interval]
+    std::string host = "127.0.0.1";
+    int port = 20000;
+    int pollInterval = 2;
+
+    if (argc >= 2) host = argv[1];
+
+    if (argc >= 3) {
+        int p = std::stoi(argv[2]);
+        if (p <= 0 || p > 65535) {
+            return 1;
+        }
+        port = p;
+    }
+
+    if (argc == 4 ) {
+        pollInterval = std::stoi(argv[3]);
+    }
+
+    if (argc > 4 ) {
+        std::cout << "Usage: ./master [host] [port] [poll interval]" << std::endl;
+        return 1;
+    }
+
+    // then use host and port where you previously had the literal
+    auto channel = manager.AddTCPClient("tcpclient", logLevels, ChannelRetry::Default(), {IPEndpoint(host.c_str(), port)},
                                         "0.0.0.0", PrintingChannelListener::Create());
 
     // The master config object for a master. The default are
@@ -67,7 +92,7 @@ int main(int argc, char* argv[])
 
     // you can override application layer settings for the master here
     // in this example, we've change the application layer timeout to 2 seconds
-    stackConfig.master.responseTimeout = TimeDuration::Seconds(2);
+    stackConfig.master.responseTimeout = TimeDuration::Seconds(pollInterval);
     stackConfig.master.disableUnsolOnStartup = true;
 
     // You can override the default link layer settings here
